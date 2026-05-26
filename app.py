@@ -12,8 +12,16 @@ the database query level.
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load .env BEFORE any os.environ reads below. load_dotenv() is a no-op
+# for variables already present in the environment (e.g. when Docker
+# Compose injects them via env_file), so it is safe for both bare-metal
+# `flask run` / `pytest` and containerized runs.
+load_dotenv()
 
 from flask import (
     Flask, render_template, request, redirect, url_for, session, flash, g,
@@ -31,6 +39,7 @@ from flask_wtf.csrf import CSRFProtect, CSRFError
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from sqlalchemy import (
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -79,9 +88,11 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=not (app.debug or TESTING),
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
     REMEMBER_COOKIE_HTTPONLY=True,
     REMEMBER_COOKIE_SAMESITE="Lax",
     REMEMBER_COOKIE_SECURE=not (app.debug or TESTING),
+    REMEMBER_COOKIE_DURATION=timedelta(days=30),
     WTF_CSRF_ENABLED=not TESTING,
     WTF_CSRF_TIME_LIMIT=3600,
 )
@@ -113,6 +124,11 @@ S3_CONTENT_DIR = Path(__file__).parent / "S3_content"
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = "login"
+# "strong" tears down the session entirely on IP/user-agent change. Default
+# is "basic" which only marks it non-fresh. Strong is the right call for an
+# app with no money flow but real per-user data: false positives (user
+# changing networks) just require re-login, which is cheap.
+login_manager.session_protection = "strong"
 
 csrf = CSRFProtect(app)
 
@@ -154,7 +170,62 @@ class User(UserMixin, SQLModel, table=True):
     username: str = Field(
         sa_column=Column(String(80), nullable=False, unique=True, index=True),
     )
-    password_hash: str = Field(sa_column=Column(String(255), nullable=False))
+    # NULLABLE in Week 7 to support OAuth-only users who have no password.
+    # The login route refuses authentication when password_hash IS NULL so
+    # a NULL hash can never accidentally authenticate. The Week 7 contract
+    # is that every User has at least one auth method, enforced at the
+    # transactional layer in the OAuth callback (see CONTRACTS.md §4).
+    password_hash: str | None = Field(
+        default=None,
+        sa_column=Column(String(255), nullable=True),
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class OAuthIdentity(SQLModel, table=True):
+    """Federated identity from an external provider (GitHub for Week 7).
+
+    Schema enforces the Week 7 linking policy: UNIQUE(provider,
+    provider_user_id) means each external account maps to exactly one
+    local User; the CHECK constraint on `provider` blocks accidental
+    case-variant duplicates ("github" vs "GitHub") that the unique
+    constraint would otherwise miss. CASCADE on user deletion keeps
+    orphan identities impossible.
+    """
+
+    __tablename__ = "oauth_identity"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider",
+            "provider_user_id",
+            name="uq_oauth_provider_user",
+        ),
+        CheckConstraint(
+            "provider IN ('github')",
+            name="ck_oauth_provider_allowed",
+        ),
+        CheckConstraint(
+            "length(provider_user_id) > 0",
+            name="ck_oauth_provider_user_id_nonempty",
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("users.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    provider: str = Field(sa_column=Column(String(50), nullable=False))
+    provider_user_id: str = Field(
+        sa_column=Column(String(255), nullable=False)
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -367,6 +438,10 @@ def register():
     db.refresh(user)
 
     login_user(user)
+    # session.permanent makes PERMANENT_SESSION_LIFETIME (12h) effective.
+    # Without this, the cookie would be a browser-session cookie that dies
+    # on browser close, ignoring the configured lifetime.
+    session.permanent = True
     audit(
         "user.register",
         user_id=user.id,
@@ -384,11 +459,15 @@ def login():
 
     username = request.form.get("username", "").strip()
     password = request.form.get("password", "")
+    remember = bool(request.form.get("remember"))
 
     db = get_db_session()
     user = db.exec(select(User).where(User.username == username)).first()
 
-    if user is None:
+    # NULL password_hash = OAuth-only user (no password set). We do NOT
+    # accept any password as valid for them, and we still run the dummy
+    # hash so the response time matches the wrong-password branch.
+    if user is None or user.password_hash is None:
         check_password_hash(_DUMMY_PASSWORD_HASH, password)
         audit("user.login.failure", username=username, ip=request.remote_addr)
         flash("Invalid username or password.")
@@ -399,8 +478,14 @@ def login():
         flash("Invalid username or password.")
         return redirect(url_for("login"))
 
-    login_user(user)
-    audit("user.login.success", user_id=user.id, ip=request.remote_addr)
+    login_user(user, remember=remember)
+    session.permanent = True
+    audit(
+        "user.login.success",
+        user_id=user.id,
+        remember=remember,
+        ip=request.remote_addr,
+    )
     return redirect(url_for("home"))
 
 

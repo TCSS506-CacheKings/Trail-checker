@@ -109,3 +109,48 @@ def test_login_redirects_home_with_session(client):
 
     with client.session_transaction() as sess:
         assert "_user_id" in sess
+
+
+def test_login_marks_session_permanent(client):
+    """session.permanent=True must be set so PERMANENT_SESSION_LIFETIME applies."""
+    client.post("/register", data={"username": "ed", "password": "password123"})
+    client.post("/logout")
+
+    client.post(
+        "/login",
+        data={"username": "ed", "password": "password123"},
+    )
+
+    with client.session_transaction() as sess:
+        assert sess.permanent is True
+
+
+def test_login_with_remember_me_issues_remember_cookie(client):
+    """Submitting `remember` on the login form must trigger Flask-Login's remember cookie."""
+    client.post("/register", data={"username": "fran", "password": "password123"})
+    client.post("/logout")
+
+    response = client.post(
+        "/login",
+        data={"username": "fran", "password": "password123", "remember": "on"},
+    )
+
+    cookies = response.headers.getlist("Set-Cookie")
+    assert any("remember_token" in cookie.lower() for cookie in cookies)
+
+
+def test_login_without_remember_me_issues_no_remember_cookie(client):
+    """Without the remember checkbox, no remember_token cookie should be set."""
+    client.post("/register", data={"username": "gus", "password": "password123"})
+    client.post("/logout")
+
+    response = client.post(
+        "/login",
+        data={"username": "gus", "password": "password123"},
+    )
+
+    cookies = response.headers.getlist("Set-Cookie")
+    assert not any(
+        "remember_token" in cookie.lower() and "max-age=0" not in cookie.lower()
+        for cookie in cookies
+    )
