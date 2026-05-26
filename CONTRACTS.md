@@ -721,6 +721,7 @@ Modified column on `users`:
 * Each new `(provider, provider_user_id)` creates a new `User`. Auto-link by email is explicitly **not** supported in Week 7. Email is not a reliable identity claim on GitHub.
 * A `User` is identified by `users.id`, not by email. Two GitHub accounts that share an email become two distinct users.
 * The `CHECK (provider IN ('github'))` constraint blocks case-variant duplicates ("GitHub" vs "github") that the unique constraint alone would miss.
+* Usernames assigned to OAuth users are stored verbatim from GitHub's `login` field. Case is preserved and treated as significant by the `users.username` unique constraint — `OctoCat` and `octocat` are two distinct accounts. The Week 7 callback contract does not normalize case.
 
 ### 7a.3 Transactional contract for the OAuth callback (Ryan)
 
@@ -779,6 +780,23 @@ No new CSRF-exempt routes in Week 7. `/login/github` is GET-only (no body to pro
 ### 7a.11 Operational note for migration
 
 Changing `users.password_hash` from `NOT NULL` to `NULL` under SQLModel's `create_all` is destructive on Postgres. The first deploy of Week 7 requires `docker compose down -v` before `docker compose up -d --build` so the `users` table is recreated with the new schema. SQLite test runs are unaffected (fresh DB per run).
+
+### 7a.12 Navbar text contract (cross-slice)
+
+When a user is authenticated, every Flask-rendered page must show, in the navbar:
+
+```
+Logged in as {username}
+```
+
+followed by a Logout control. `{username}` is the literal value of `User.username` for the currently authenticated session, surfaced to templates by the `inject_user` context processor as `user.username`. No prefix, no truncation, no styling that would split the string across DOM nodes in a way that breaks a `to_contain_text` assertion.
+
+Playwright e2e tests will assert this exact string. Any change to the format requires updating this contract and the affected tests in the same PR.
+
+This contract is cross-slice:
+* Nick (DB-and-security): guarantees `User.username` is non-null, unique, and stable for the session lifetime.
+* Liam (client): owns the navbar template and the exact text rendering.
+* Ryan (server): guarantees that the OAuth callback writes a non-empty `User.username` per §7a.2 before calling `login_user`.
 
 ## 8. Known limitations for Week 6
 
