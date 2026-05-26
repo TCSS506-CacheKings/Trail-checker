@@ -134,3 +134,50 @@ The slice landed in `app.py`, `requirements.txt`, the existing auth templates, a
 - HSTS once HTTPS is enforced in front of the app.
 - Pwned Passwords API check during register.
 - Persistent rate-limit storage (Redis) and IP-based abuse detection.
+
+## Week 7 DB-and-security slice (Nick) — implementation notes
+
+Slice landed across `app.py`, `requirements.txt`, `.env.example`, `tests/test_db_security.py`, `tests/test_auth.py`, and new `tests/e2e/conftest.py`. Reference CONTRACTS.md §7a for the authoritative contract.
+
+### What changed in code
+
+- **N6** `python-dotenv` added to `requirements.txt`. `app.py` calls `load_dotenv()` before any `os.environ` read so bare-metal `flask run` / `pytest` see the same env as Docker Compose. `.env.example` rewritten to list every required variable including the new `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET`.
+- **N1** New `OAuthIdentity` SQLModel with `UNIQUE(provider, provider_user_id)`, `ON DELETE CASCADE` on `user_id`, `index=True` on `user_id` (for fast reverse lookups and fast CASCADE), `CheckConstraint("provider IN ('github')")` to block case-variant duplicates, and `CheckConstraint("length(provider_user_id) > 0")`.
+- **N2** `User.password_hash` is now `nullable=True` (typed `str | None`). The login route rejects `password_hash IS NULL` users without crashing and still runs the dummy hash to keep response timing constant.
+- **N3** Enforced by N1's unique constraint + the lack of any email-based linking column. No code beyond the schema; the policy lives in CONTRACTS.md §7a.2.
+- **N4** Added `PERMANENT_SESSION_LIFETIME = timedelta(hours=12)` and `REMEMBER_COOKIE_DURATION = timedelta(days=30)` to `app.config`. Set `login_manager.session_protection = "strong"`. `session.permanent = True` is set after every `login_user(...)` so the 12h lifetime actually applies. Login route now reads the `remember` form field.
+- **N5** No new exempt routes. Verified by `git grep 'method="post"'` vs `git grep csrf_token()` in templates.
+- **N7** New `tests/e2e/conftest.py` uses a per-pytest-session tempfile SQLite path (`tempfile.gettempdir() + uuid4().hex + ".db"`, chmod 0600) so concurrent runs cannot collide and `/tmp` is not used as a shared world-readable surface. `pytest_sessionfinish` cleans up.
+
+### Coordination items for Ryan
+
+- The `OAuthIdentity` model is importable as `from app import OAuthIdentity`. Use `(provider="github", provider_user_id=str(github_user_id))` — the CHECK constraint will reject any other case or empty value.
+- Callback **must** use a single transaction for the lookup-or-create flow and handle `IntegrityError` on the unique constraint as "concurrent callback won the race" (re-SELECT). See CONTRACTS.md §7a.3.
+- Callback **must** use Authlib's built-in `state` validation. See §7a.4.
+- Callback **must** be rate-limited at the same rate as `/login` (`10 per minute`). See §7a.5.
+- `/test/login/<username>` backdoor must have three independent gates (TESTING + (debug OR localhost host) + 404-on-failure). See §7a.6.
+- OAuth login: always call `login_user(user, remember=True)` followed by `session.permanent = True`.
+
+### Coordination items for Liam
+
+- Login form should add a `<input type="checkbox" name="remember">` and label. The login route reads `request.form.get("remember")`; any truthy value (e.g. `"on"`) triggers `remember=True`.
+- No template change is needed for OAuth's "Sign in with GitHub" button beyond `<a href="{{ url_for('login_github') }}">` once Ryan's route exists.
+
+### Operational note for the first Week 7 deploy
+
+Making `users.password_hash` nullable is a destructive schema change for an existing Postgres database under `SQLModel.metadata.create_all`. First deploy requires:
+
+```bash
+docker compose down -v
+docker compose up -d --build
+```
+
+SQLite test runs are unaffected (fresh DB per run). This requirement is also captured in CONTRACTS.md §7a.11.
+
+### Week 7 known follow-ups not in scope
+
+- Persist audit log to a `security_events` table or a mounted file (currently stdout-only, recycled on container restart).
+- Session invalidation on password change (Flask-Login does not handle this out of the box; needs a `session_version` field on `User` or `SECRET_KEY` rotation).
+- Pre-commit hook to scan `.env.example` for accidentally-real secret values.
+- Postgres `sslmode=require` once the DB ever moves off the in-Compose network.
+- Account-deletion UI (CASCADE handles the data side, but no user-facing flow exists).

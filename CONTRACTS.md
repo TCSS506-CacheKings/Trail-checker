@@ -694,6 +694,92 @@ The final `e2e.md` must exercise:
 
 At least one E2E step must hit the real OpenWeather service, not mocked fixtures.
 
+## 7a. Week 7 — OAuth (GitHub) addendum
+
+Week 7 adds federated identity via GitHub OAuth. The Week 6 contracts above remain in force; this section adds to and modifies them where noted.
+
+### 7a.1 Schema additions
+
+New table `oauth_identity`:
+
+| column | type | nullable | constraint |
+|---|---|---|---|
+| `id` | int (PK) | no | |
+| `user_id` | int (FK users.id) | no | `ON DELETE CASCADE`; indexed |
+| `provider` | varchar(50) | no | `CHECK (provider IN ('github'))` |
+| `provider_user_id` | varchar(255) | no | `CHECK (length(provider_user_id) > 0)` |
+| `created_at` | timestamptz | no | |
+
+Plus: `UNIQUE (provider, provider_user_id)`.
+
+Modified column on `users`:
+
+* `password_hash` is now **NULLABLE**. An OAuth-only `User` has `password_hash IS NULL`.
+
+### 7a.2 Linking policy (Nick N3)
+
+* Each new `(provider, provider_user_id)` creates a new `User`. Auto-link by email is explicitly **not** supported in Week 7. Email is not a reliable identity claim on GitHub.
+* A `User` is identified by `users.id`, not by email. Two GitHub accounts that share an email become two distinct users.
+* The `CHECK (provider IN ('github'))` constraint blocks case-variant duplicates ("GitHub" vs "github") that the unique constraint alone would miss.
+
+### 7a.3 Transactional contract for the OAuth callback (Ryan)
+
+The lookup-or-create flow in `/auth/github/callback` MUST run as a single transaction:
+
+1. SELECT `OAuthIdentity` by `(provider, provider_user_id)`.
+2. If not found: INSERT `User`, FLUSH to obtain `user.id`, INSERT `OAuthIdentity`, COMMIT.
+3. If the COMMIT raises `IntegrityError` (a concurrent callback won the race), ROLLBACK and re-SELECT to use the winning identity.
+
+This prevents the orphan-User class of bug where a User row is committed before its OAuthIdentity row fails the unique constraint.
+
+### 7a.4 OAuth `state` validation (Ryan)
+
+The OAuth `state` parameter MUST be validated using Authlib's built-in mechanism (`oauth.github.authorize_redirect(...)` paired with `oauth.github.authorize_access_token()`). Without `state` validation an attacker can trick a victim into linking the attacker's GitHub account to the victim's session — this is the OAuth equivalent of CSRF. Any custom `state` handling requires explicit team review.
+
+### 7a.5 Rate limits
+
+* `/login` — `10 per minute` per IP (unchanged).
+* `/auth/github/callback` — `10 per minute` per IP. The callback is an equivalent auth surface and must be rate-limited symmetrically.
+* `/login/github` (redirect initiator) — not rate-limited; it has no auth side-effects.
+
+### 7a.6 Test-mode backdoor (Ryan R5)
+
+`/test/login/<username>` is a complete authentication bypass and MUST be guarded by **three** independent conditions:
+
+1. `TESTING` environment is set (i.e. `os.environ["TESTING"] == "1"`).
+2. `app.debug` is True OR the host is `localhost`/`127.0.0.1`.
+3. The route returns `404` (not `403`) when any gate fails, to avoid leaking its existence.
+
+A single-gate guard is insufficient: one misconfigured deploy with `TESTING=1` leaked into production is total compromise.
+
+### 7a.7 Session and cookie lifetimes (Nick N4)
+
+* `PERMANENT_SESSION_LIFETIME` = 12 hours. Applied by setting `session.permanent = True` after every `login_user(...)` call.
+* `REMEMBER_COOKIE_DURATION` = 30 days. Applied when `login_user(user, remember=True)` is called.
+* OAuth login is always `remember=True` (Liam L5 spec).
+* Password login reads the `remember` form field (truthy = remember=True).
+* `SESSION_PROTECTION="strong"`: any mismatch in IP/User-Agent on session reload triggers a full logout (not just `non-fresh`). The false-positive cost (user changes networks) is acceptable for this app.
+
+### 7a.8 Secret hygiene (Nick N6)
+
+* `.env` is the single source of truth for secrets. `.env.example` lists the keys with placeholder values.
+* `app.py` calls `load_dotenv()` before any `os.environ` read so bare-metal `flask run` and `pytest` get the same env as Docker Compose.
+* New secrets in Week 7: `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET`. Never echo into logs, screenshots, or git history.
+
+### 7a.9 CSRF (Nick N5)
+
+No new CSRF-exempt routes in Week 7. `/login/github` is GET-only (no body to protect); `/auth/github/callback` is protected by OAuth `state` rather than CSRF tokens. All POST forms keep `{{ csrf_token() }}`.
+
+### 7a.10 Test plumbing (Nick N7)
+
+* `tests/e2e/conftest.py` sets `TESTING=1`, `SECRET_KEY=test-secret-e2e`, and a per-pytest-session tempfile SQLite `DATABASE_URL` BEFORE app import.
+* The tempfile path is randomized per session and chmod'd 0600 so concurrent runs cannot collide and other users on a shared host cannot read it.
+* `tests/conftest.py` remains the in-memory SQLite setup for unit/integration tests.
+
+### 7a.11 Operational note for migration
+
+Changing `users.password_hash` from `NOT NULL` to `NULL` under SQLModel's `create_all` is destructive on Postgres. The first deploy of Week 7 requires `docker compose down -v` before `docker compose up -d --build` so the `users` table is recreated with the new schema. SQLite test runs are unaffected (fresh DB per run).
+
 ## 8. Known limitations for Week 6
 
 The team is deliberately punting the following:
