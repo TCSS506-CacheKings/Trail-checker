@@ -84,6 +84,36 @@ Skipping `-v` will silently keep the previous schema and the new constraints wil
 
 ## Running tests
 
+The unit and integration tests run against an in-memory SQLite DB and need
+no extra setup beyond `requirements.txt`:
+
 ```bash
-pytest -v
+pytest tests/ --ignore=tests/e2e -v
 ```
+
+### Playwright end-to-end tests
+
+The e2e tests under `tests/e2e/` drive a real Chromium browser against a
+Flask subprocess. They live behind a separate dev requirements file so
+the production Docker image stays lean.
+
+The recommended way to run e2e is **on the host** (not inside the
+container), because Chromium needs system libraries that the
+`python:3.12-slim` base image does not ship:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+playwright install --with-deps chromium
+pytest tests/e2e -v
+```
+
+If you must run e2e in Docker, use a Playwright-flavored image such as
+`mcr.microsoft.com/playwright/python:v1.42.0-jammy` instead of the
+default slim image.
+
+Each e2e session uses a per-pytest-session tempfile SQLite database
+(created and cleaned up by `tests/e2e/conftest.py`), so concurrent runs
+do not collide. The Flask subprocess binds to `127.0.0.1` only, so the
+test server is not reachable from other processes on a shared host.

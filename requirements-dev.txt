@@ -1,0 +1,14 @@
+# Development-only dependencies. NOT installed in the production Docker
+# image (the Dockerfile only installs requirements.txt). Install locally
+# or in CI with:
+#
+#   pip install -r requirements-dev.txt
+#   playwright install chromium
+#
+# Keeping these separate avoids shipping ~300 MB of browser binaries and
+# several native libraries into prod.
+
+-r requirements.txt
+
+pytest-playwright==0.4.4
+playwright==1.42.0

@@ -6,9 +6,9 @@ Repo: https://github.com/TCSS506-CacheKings/Trail-checker
 
 ## Participants
 
-- Liam Sipp ó Client-side
-- Ryan Belmonte ó Server-side
-- Nick Stjern ó DB-and-security
+- Liam Sipp ù Client-side
+- Ryan Belmonte ù Server-side
+- Nick Stjern ù DB-and-security
 
 ## Context
 
@@ -103,7 +103,7 @@ We also discussed that the README/About/CONTRACTS files need to stay aligned so 
 
 The next setup step is to add the four Week 6 test files under `tests/`. After those files are committed in this branch, the team can review this setup PR before individual role implementation starts.
 
-## DB-and-security slice (Nick) ó implementation notes
+## DB-and-security slice (Nick) ù implementation notes
 
 The slice landed in `app.py`, `requirements.txt`, the existing auth templates, and `tests/test_db_security.py`. Key changes:
 
@@ -121,7 +121,7 @@ The slice landed in `app.py`, `requirements.txt`, the existing auth templates, a
 
 ### Coordination items for the other roles
 
-- Liam: template work remains ó `templates/trail_checker.html`, `templates/trail_results.html`, and `templates/saved_trails.html` are not yet present. Every POST form Liam adds must include `{{ csrf_token() }}` (see the existing `login.html`, `register.html`, and the navbar logout form in `base.html` for reference).
+- Liam: template work remains ù `templates/trail_checker.html`, `templates/trail_results.html`, and `templates/saved_trails.html` are not yet present. Every POST form Liam adds must include `{{ csrf_token() }}` (see the existing `login.html`, `register.html`, and the navbar logout form in `base.html` for reference).
 - Liam: when `saved_trails.html` is added, render the `prior_input` template variable to repopulate the form after a validation error.
 - Ryan: `check_saved_trail` currently renders the saved trail data with `recommendation="unknown"`. Wire it to the live OpenWeather fetch when the server-side slice lands.
 - Ryan: `/api/conditions` JSON envelope and `trail_checks` insertion remain in the server-side slice. The `TrailCheck` model and its schema are ready.
@@ -135,27 +135,27 @@ The slice landed in `app.py`, `requirements.txt`, the existing auth templates, a
 - Pwned Passwords API check during register.
 - Persistent rate-limit storage (Redis) and IP-based abuse detection.
 
-## Week 7 DB-and-security slice (Nick) ó implementation notes
+## Week 7 DB-and-security slice (Nick) ù implementation notes
 
-Slice landed across `app.py`, `requirements.txt`, `.env.example`, `tests/test_db_security.py`, `tests/test_auth.py`, and new `tests/e2e/conftest.py`. Reference CONTRACTS.md ß7a for the authoritative contract.
+Slice landed across `app.py`, `requirements.txt`, `.env.example`, `tests/test_db_security.py`, `tests/test_auth.py`, and new `tests/e2e/conftest.py`. Reference CONTRACTS.md ù7a for the authoritative contract.
 
 ### What changed in code
 
 - **N6** `python-dotenv` added to `requirements.txt`. `app.py` calls `load_dotenv()` before any `os.environ` read so bare-metal `flask run` / `pytest` see the same env as Docker Compose. `.env.example` rewritten to list every required variable including the new `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET`.
 - **N1** New `OAuthIdentity` SQLModel with `UNIQUE(provider, provider_user_id)`, `ON DELETE CASCADE` on `user_id`, `index=True` on `user_id` (for fast reverse lookups and fast CASCADE), `CheckConstraint("provider IN ('github')")` to block case-variant duplicates, and `CheckConstraint("length(provider_user_id) > 0")`.
 - **N2** `User.password_hash` is now `nullable=True` (typed `str | None`). The login route rejects `password_hash IS NULL` users without crashing and still runs the dummy hash to keep response timing constant.
-- **N3** Enforced by N1's unique constraint + the lack of any email-based linking column. No code beyond the schema; the policy lives in CONTRACTS.md ß7a.2.
+- **N3** Enforced by N1's unique constraint + the lack of any email-based linking column. No code beyond the schema; the policy lives in CONTRACTS.md ù7a.2.
 - **N4** Added `PERMANENT_SESSION_LIFETIME = timedelta(hours=12)` and `REMEMBER_COOKIE_DURATION = timedelta(days=30)` to `app.config`. Set `login_manager.session_protection = "strong"`. `session.permanent = True` is set after every `login_user(...)` so the 12h lifetime actually applies. Login route now reads the `remember` form field.
 - **N5** No new exempt routes. Verified by `git grep 'method="post"'` vs `git grep csrf_token()` in templates.
 - **N7** New `tests/e2e/conftest.py` uses a per-pytest-session tempfile SQLite path (`tempfile.gettempdir() + uuid4().hex + ".db"`, chmod 0600) so concurrent runs cannot collide and `/tmp` is not used as a shared world-readable surface. `pytest_sessionfinish` cleans up.
 
 ### Coordination items for Ryan
 
-- The `OAuthIdentity` model is importable as `from app import OAuthIdentity`. Use `(provider="github", provider_user_id=str(github_user_id))` ó the CHECK constraint will reject any other case or empty value.
-- Callback **must** use a single transaction for the lookup-or-create flow and handle `IntegrityError` on the unique constraint as "concurrent callback won the race" (re-SELECT). See CONTRACTS.md ß7a.3.
-- Callback **must** use Authlib's built-in `state` validation. See ß7a.4.
-- Callback **must** be rate-limited at the same rate as `/login` (`10 per minute`). See ß7a.5.
-- `/test/login/<username>` backdoor must have three independent gates (TESTING + (debug OR localhost host) + 404-on-failure). See ß7a.6.
+- The `OAuthIdentity` model is importable as `from app import OAuthIdentity`. Use `(provider="github", provider_user_id=str(github_user_id))` ù the CHECK constraint will reject any other case or empty value.
+- Callback **must** use a single transaction for the lookup-or-create flow and handle `IntegrityError` on the unique constraint as "concurrent callback won the race" (re-SELECT). See CONTRACTS.md ù7a.3.
+- Callback **must** use Authlib's built-in `state` validation. See ù7a.4.
+- Callback **must** be rate-limited at the same rate as `/login` (`10 per minute`). See ù7a.5.
+- `/test/login/<username>` backdoor must have three independent gates (TESTING + (debug OR localhost host) + 404-on-failure). See ù7a.6.
 - OAuth login: always call `login_user(user, remember=True)` followed by `session.permanent = True`.
 
 ### Coordination items for Liam
@@ -172,7 +172,7 @@ docker compose down -v
 docker compose up -d --build
 ```
 
-SQLite test runs are unaffected (fresh DB per run). This requirement is also captured in CONTRACTS.md ß7a.11.
+SQLite test runs are unaffected (fresh DB per run). This requirement is also captured in CONTRACTS.md ù7a.11.
 
 ### Week 7 known follow-ups not in scope
 
@@ -181,3 +181,27 @@ SQLite test runs are unaffected (fresh DB per run). This requirement is also cap
 - Pre-commit hook to scan `.env.example` for accidentally-real secret values.
 - Postgres `sslmode=require` once the DB ever moves off the in-Compose network.
 - Account-deletion UI (CASCADE handles the data side, but no user-facing flow exists).
+
+### Week 7 Playwright e2e (Nick) ù implementation notes
+
+The DB-and-security Playwright slice lives at `tests/e2e/test_protected_routes.py`. It is the lifecycle test required by the Week 7 grading rubric: protected page inaccessible ? accessible after login ? inaccessible again after logout, all verified through the rendered DOM via `page.expect(...)`.
+
+Key design choices:
+
+- **Password auth, not OAuth.** The test uses `/register` + `/login`, not the GitHub flow, so it does not depend on Ryan's Authlib slice. Ryan's own Playwright test covers the OAuth happy path.
+- **Inline subprocess runner.** The `live_server` fixture launches Flask via `python -c "from app import app; app.run(host='127.0.0.1', ...)"` rather than `python app.py`. This pins the test server to `127.0.0.1` instead of `0.0.0.0`, so other processes on a shared CI runner cannot reach it.
+- **Random ephemeral port.** The fixture binds to a free port returned by `socket.bind((host, 0))` instead of a hardcoded `:5000`, so a stale `docker compose up` stack on `:5000` cannot capture the test traffic (this bit me once during development ó the test silently hit the Postgres-backed container, where CSRF is enabled, and registration failed without the test noticing).
+- **HTTP-level readiness probe.** `_wait_for_server` polls `GET /login` (not just a TCP port open), so we only proceed once *our* Flask is actually serving requests, not just once the OS handed out the socket.
+- **Force-overwrite of DATABASE_URL in tests/e2e/conftest.py.** `tests/conftest.py` hard-assigns `sqlite:///:memory:` for unit tests; the e2e conftest must use plain `os.environ[...] = ...` (not `setdefault`) or the subprocess boots against `:memory:`, where every connection sees an empty schema and `/register` blows up with `no such table: users`.
+- **`expect_navigation()` around form submits.** Both the register and the logout clicks are wrapped so the test waits for `POST ? 302 ? GET` to fully complete before the next assertion. Without this, a follow-up `page.goto` can race the in-flight redirect and discard the session cookie.
+- **`force=True` on the logout click.** Playwright's "receives events" actionability check spuriously fails on Bootstrap's `.btn-link.nav-link` combo in headless Chromium (the surrounding nav-link padding overlaps the button's hit area). The button is asserted visible immediately before the click, so forcing the click is safe and does not weaken the test.
+- **Substring username assertion.** The test asserts `nav` contains `e2e-protected`, not the full `Logged in as e2e-protected` string. This passes both under today's `Hello, <username>` template and after Liam updates `templates/base.html` to the ù7a.12 contract ù keeping Nick's test decoupled from Liam's merge order.
+- **No-leak assertion.** Each anonymous phase asserts that the protected heading (`Your saved locations`) has count `0`. This proves no protected DOM bleeds into the response, which is stronger than asserting the URL alone.
+
+Dev dependencies (`playwright`, `pytest-playwright`) live in `requirements-dev.txt`, separate from production requirements, so the prod Docker image does not ship browser binaries. README.md has the install/run instructions for both bare-metal and Docker.
+
+### Coordination items for the other Playwright authors
+
+- **Liam** owns the navbar template update from `Hello, ` ? `Logged in as ` (ù7a.12). Until that lands, Ryan's "exact text" assertion will fail. Nick's test is decoupled from this.
+- **Liam** owns pinning the post-login landing page (suggested: `/saved-trails`). Nick's test navigates explicitly, so this does not affect Nick.
+- **Coordinator** owns the `/test/login/<username>` backdoor. Recommended shape: GET, three gates per ù7a.6, calls `login_user(user); session.permanent = True`, redirects to whatever Liam pins as the post-login landing page.

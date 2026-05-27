@@ -28,8 +28,13 @@ _E2E_DB_PATH = (
     Path(tempfile.gettempdir()) / f"trail_checker_e2e_{uuid.uuid4().hex}.db"
 )
 
-os.environ.setdefault("TESTING", "1")
-os.environ.setdefault("DATABASE_URL", f"sqlite:///{_E2E_DB_PATH}")
+# IMPORTANT: tests/conftest.py is loaded *before* this conftest and
+# hard-assigns DATABASE_URL=sqlite:///:memory: for unit tests. setdefault
+# would silently no-op against that and our Flask subprocess would boot
+# against :memory: (separate process → empty schema → register fails).
+# Force-overwrite for the e2e suite.
+os.environ["TESTING"] = "1"
+os.environ["DATABASE_URL"] = f"sqlite:///{_E2E_DB_PATH}"
 os.environ.setdefault("SECRET_KEY", "test-secret-e2e")
 
 sys.path.insert(
