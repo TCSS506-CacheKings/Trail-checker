@@ -39,5 +39,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run tests
-        run: pytest -v
+      - name: Install Playwright browsers
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run unit/integration tests (exclude e2e)
+        run: |
+          TESTING=1 SECRET_KEY=test-secret pytest -v --ignore=tests/e2e
+
+      - name: Run Playwright e2e tests
+        run: |
+          TESTING=1 SECRET_KEY=test-secret-e2e pytest -v tests/e2e

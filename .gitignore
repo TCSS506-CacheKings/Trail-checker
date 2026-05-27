@@ -30,3 +30,7 @@ instance/
 
 # Local logs (e.g. audit log output if the team wires a FileHandler)
 *.log
+
+# Local-only: assignment/study guides and duplicate contract mirror (not for team remote)
+docs/
+contracts/CONTRACTS.md

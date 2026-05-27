@@ -95,8 +95,8 @@ def test_login_with_wrong_password_shows_invalid(client):
     assert b"Invalid" in response.data
 
 
-def test_login_redirects_home_with_session(client):
-    """A successful login redirects to / and sets the Flask-Login session."""
+def test_login_redirects_saved_trails_with_session(client):
+    """A successful login redirects to /saved-trails and sets the Flask-Login session."""
     client.post("/register", data={"username": "carol", "password": "secret123"})
     client.post("/logout")
 
@@ -105,7 +105,7 @@ def test_login_redirects_home_with_session(client):
         data={"username": "carol", "password": "secret123"},
     )
     assert response.status_code == 302
-    assert response.location.endswith("/")
+    assert response.location.endswith("/saved-trails")
 
     with client.session_transaction() as sess:
         assert "_user_id" in sess

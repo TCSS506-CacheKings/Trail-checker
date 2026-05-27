@@ -112,3 +112,32 @@ def test_saved_trails_page_has_empty_state(client):
 
     if response.status_code == 200:
         assert b'data-testid="saved-trails-empty"' in response.data
+
+def test_login_page_has_github_button_and_remember_checkbox(client):
+    """Week 7 login page keeps password login and adds GitHub + remember UI."""
+    response = client.get("/login")
+
+    assert response.status_code == 200
+    assert b"Sign in with GitHub" in response.data
+    assert b'href="/login/github"' in response.data
+    assert b'name="username"' in response.data
+    assert b'name="password"' in response.data
+    assert b'name="remember"' in response.data
+    assert b'id="remember"' in response.data
+    assert b"Remember me" in response.data
+
+
+def test_logged_in_navbar_uses_week7_contract_text_and_logout_button(client):
+    """Authenticated navbar exposes stable text for Week 7 Playwright assertions."""
+    client.post(
+        "/register",
+        data={"username": "LiamCase", "password": "password123"},
+    )
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert b"Logged in as LiamCase" in response.data
+    assert b'action="/logout"' in response.data
+    assert b'method="POST"' in response.data
+    assert b"Logout" in response.data

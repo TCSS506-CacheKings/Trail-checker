@@ -4,19 +4,42 @@
 <div class="row">
     <div class="col-md-5 mx-auto">
         <h1 class="h3 mb-4">Log in</h1>
-        <form method="POST" action="{{ url_for('login') }}" data-disable-on-submit>
-            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <div class="mb-3">
-                <label for="username" class="form-label">Username</label>
-                <input type="text" class="form-control" id="username" name="username" required autofocus>
+
+        <div class="card shadow-sm mb-4">
+            <div class="card-body">
+                <a href="/login/github" class="btn btn-dark w-100 mb-3">
+                    Sign in with GitHub
+                </a>
+
+                <div class="text-center text-muted small mb-3">
+                    or log in with your Trail Checker account
+                </div>
+
+                <form method="POST" action="{{ url_for('login') }}" data-disable-on-submit>
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                    <div class="mb-3">
+                        <label for="username" class="form-label">Username</label>
+                        <input type="text" class="form-control" id="username" name="username" required autofocus>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Password</label>
+                        <input type="password" class="form-control" id="password" name="password" required>
+                    </div>
+
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" value="1" id="remember" name="remember">
+                        <label class="form-check-label" for="remember">
+                            Remember me
+                        </label>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">Log in</button>
+                    <a href="{{ url_for('register') }}" class="btn btn-link">Need an account?</a>
+                </form>
             </div>
-            <div class="mb-3">
-                <label for="password" class="form-label">Password</label>
-                <input type="password" class="form-control" id="password" name="password" required>
-            </div>
-            <button type="submit" class="btn btn-primary">Log in</button>
-            <a href="{{ url_for('register') }}" class="btn btn-link">Need an account?</a>
-        </form>
+        </div>
     </div>
 </div>
 {% endblock %}

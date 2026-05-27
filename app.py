@@ -132,6 +132,33 @@ login_manager.session_protection = "strong"
 
 csrf = CSRFProtect(app)
 
+
+def _oauth_github_configured() -> bool:
+    return bool(
+        os.environ.get("GITHUB_OAUTH_CLIENT_ID")
+        and os.environ.get("GITHUB_OAUTH_CLIENT_SECRET")
+    )
+
+
+if not TESTING and not _oauth_github_configured():
+    raise RuntimeError(
+        "GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET must be set "
+        "when TESTING is not enabled. Copy .env.example to .env and configure "
+        "your GitHub OAuth app (see CONTRACTS.md §7a.13)."
+    )
+
+oauth = OAuth(app)
+if _oauth_github_configured():
+    oauth.register(
+        name="github",
+        client_id=os.environ["GITHUB_OAUTH_CLIENT_ID"],
+        client_secret=os.environ["GITHUB_OAUTH_CLIENT_SECRET"],
+        access_token_url="https://github.com/login/oauth/access_token",
+        authorize_url="https://github.com/login/oauth/authorize",
+        api_base_url="https://api.github.com/",
+        client_kwargs={"scope": "read:user user:email"},
+    )
+
 limiter = Limiter(
     get_remote_address,
     app=app,
@@ -384,6 +411,89 @@ def validate_password_policy(password: str) -> None:
         )
 
 
+def _test_login_allowed() -> bool:
+    """§7a.6 — three gates; caller returns 404 when False."""
+    if os.environ.get("TESTING") != "1":
+        return False
+    if app.debug:
+        return True
+    host = (request.host or "").split(":")[0]
+    return host in ("localhost", "127.0.0.1")
+
+
+def _unique_username(db: Session, base: str) -> str:
+    candidate = base
+    suffix = 0
+    while db.exec(select(User).where(User.username == candidate)).first() is not None:
+        suffix += 1
+        candidate = f"{base}-{suffix}"
+    return candidate
+
+
+def _username_from_github_user(db: Session, github_user: dict, provider_user_id: str) -> str:
+    login_name = (github_user.get("login") or "").strip()
+    if login_name:
+        if (
+            db.exec(select(User).where(User.username == login_name)).first()
+            is None
+        ):
+            return login_name
+    return _unique_username(db, f"github-{provider_user_id}")
+
+
+def find_or_create_user_from_github(db: Session, github_user: dict) -> User | None:
+    """§7a.3 / §7a.14 — transactional lookup-or-create on OAuthIdentity."""
+    if github_user.get("id") is None:
+        return None
+
+    provider = "github"
+    provider_user_id = str(github_user["id"])
+
+    identity = db.exec(
+        select(OAuthIdentity).where(
+            OAuthIdentity.provider == provider,
+            OAuthIdentity.provider_user_id == provider_user_id,
+        )
+    ).first()
+    if identity is not None:
+        return db.get(User, identity.user_id)
+
+    user = User(
+        username=_username_from_github_user(db, github_user, provider_user_id),
+        password_hash=None,
+    )
+    db.add(user)
+    db.flush()
+    db.add(
+        OAuthIdentity(
+            user_id=user.id,
+            provider=provider,
+            provider_user_id=provider_user_id,
+        )
+    )
+    try:
+        db.commit()
+        db.refresh(user)
+        return user
+    except IntegrityError:
+        db.rollback()
+        identity = db.exec(
+            select(OAuthIdentity).where(
+                OAuthIdentity.provider == provider,
+                OAuthIdentity.provider_user_id == provider_user_id,
+            )
+        ).first()
+        if identity is None:
+            raise
+        return db.get(User, identity.user_id)
+
+
+def _login_user_after_oauth(user: User) -> None:
+    """§7a.7 — normal session lifetime for OAuth (no remember-me cookie)."""
+    login_user(user)
+    session.permanent = True
+
+
 @app.route("/")
 def home():
     return render_template("home.html")
@@ -495,7 +605,75 @@ def logout():
     user_id = current_user.id
     logout_user()
     audit("user.logout", user_id=user_id, ip=request.remote_addr)
-    return redirect(url_for("home"))
+    return redirect(url_for("login"))
+
+
+@app.route("/login/github")
+def login_github():
+    if not _oauth_github_configured():
+        flash("GitHub sign-in is not configured.")
+        return redirect(url_for("login"))
+    redirect_uri = url_for("auth_github_callback", _external=True)
+    return oauth.github.authorize_redirect(redirect_uri)
+
+
+@app.route("/auth/github/callback")
+@limiter.limit("10 per minute")
+def auth_github_callback():
+    if not _oauth_github_configured():
+        flash("GitHub sign-in is not configured.")
+        return redirect(url_for("login"))
+
+    try:
+        token = oauth.github.authorize_access_token()
+    except MismatchingStateError:
+        flash("Sign-in could not be completed. Please try again.")
+        return redirect(url_for("login"))
+    except OAuthError:
+        flash("Sign-in could not be completed. Please try again.")
+        return redirect(url_for("login"))
+
+    resp = oauth.github.get("user", token=token)
+    if resp.status_code != 200:
+        flash("Sign-in could not be completed. Please try again.")
+        return redirect(url_for("login"))
+
+    github_user = resp.json()
+    db = get_db_session()
+    user = find_or_create_user_from_github(db, github_user)
+    if user is None:
+        flash("Sign-in could not be completed. Please try again.")
+        return redirect(url_for("login"))
+
+    _login_user_after_oauth(user)
+    audit(
+        "user.login.oauth",
+        user_id=user.id,
+        provider="github",
+        ip=request.remote_addr,
+    )
+    return redirect(url_for("saved_trails"))
+
+
+@app.route("/test/login/<username>")
+def test_login(username: str):
+    if not _test_login_allowed():
+        abort(404)
+
+    cleaned = (username or "").strip()
+    if not cleaned or len(cleaned) > 80:
+        abort(404)
+
+    db = get_db_session()
+    user = db.exec(select(User).where(User.username == cleaned)).first()
+    if user is None:
+        user = User(username=cleaned, password_hash=None)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    _login_user_after_oauth(user)
+    return redirect(url_for("saved_trails"))
 
 
 @app.route("/about")
